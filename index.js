@@ -22,8 +22,6 @@ const MONGO_URI = process.env.MONGODB_URI ||
 async function connectDB() {
   try {
     await mongoose.connect(MONGO_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       dbName: "cards-backup", // ensures correct DB is targeted
     });
     console.log("✅ Connected to MongoDB: shoob");
