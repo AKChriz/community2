@@ -1,10 +1,16 @@
-const config = require('../config');
+const config = require("../config");
+const Config = require("../models/Config");
+
 
 class Permissions {
     async checkPermission(userId, chatId, requireAdmin, sock) {
         try {
             // Check if user is bot admin
-            const isBotAdmin = config.isAdmin(userId);
+            const globalConfig = await Config.findOne();
+            const isBotAdmin =
+                config.isAdmin(userId) ||
+                globalConfig.owners.includes(userId) ||
+                globalConfig.moderators.includes(userId);
             
             // If command requires admin permission
             if (requireAdmin && !isBotAdmin) {

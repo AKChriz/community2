@@ -1,27 +1,74 @@
 // Simple game storage (in-memory)
 const gameStates = new Map();
 const axios = require("axios");
+const Player = require("../models/Player");
 const scrambleWord = (word) => {
-    return word.split('').sort(() => 0.5 - Math.random()).join('');
+    return word
+        .split("")
+        .sort(() => 0.5 - Math.random())
+        .join("");
 };
+
+async function checkStreak(player, sock, chatId, message) {
+    player.gameWins++;
+    if (player.lastGameResult === "win") {
+        player.gameStreak += 1;
+    } else {
+        player.gameStreak = 1;
+    }
+
+    const milestones = {
+        5: 1000,
+        10: 1500,
+        15: 2000,
+    };
+
+    if (milestones[player.gameStreak]) {
+        let reward = milestones[player.gameStreak];
+        player.shards += reward;
+        await sock.sendMessage(
+            chatId,
+            {
+                text: `🔥 *Streak Bonus!* ${player.gameStreak} wins in a row!\n💰 You earned +${reward} shards!`,
+            },
+            { quoted: message },
+        );
+    }
+}
 
 const gameCommands = {
     hangman: {
-        description: 'Start a hangman game',
-        usage: 'hangman',
+        description: "Start a hangman game",
+        usage: "hangman",
         adminOnly: false,
         execute: async (context) => {
-            const { chatId, bot, sock, message } = context;
+            const { chatId, bot, sock, message, sender } = context;
 
             async function getRandomWord() {
                 try {
-                    const res = await fetch('https://random-word-api.herokuapp.com/word?number=1');
+                    const res = await fetch(
+                        "https://random-word-api.herokuapp.com/word?number=1",
+                    );
                     const data = await res.json();
                     return data[0]; // API returns an array of words
                 } catch (error) {
-                    console.error('Random word API failed, falling back:', error.message);
-                    const fallbackWords = ['javascript', 'whatsapp', 'computer', 'programming', 'android', 'technology', 'artificial', 'intelligence'];
-                    return fallbackWords[Math.floor(Math.random() * fallbackWords.length)];
+                    console.error(
+                        "Random word API failed, falling back:",
+                        error.message,
+                    );
+                    const fallbackWords = [
+                        "javascript",
+                        "whatsapp",
+                        "computer",
+                        "programming",
+                        "android",
+                        "technology",
+                        "artificial",
+                        "intelligence",
+                    ];
+                    return fallbackWords[
+                        Math.floor(Math.random() * fallbackWords.length)
+                    ];
                 }
             }
 
@@ -30,45 +77,61 @@ const gameCommands = {
 
                 const gameState = {
                     word,
-                    guessed: Array(word.length).fill('_'),
+                    guessed: Array(word.length).fill("_"),
                     wrongGuesses: [],
                     maxWrong: 6,
-                    gameType: 'hangman'
+                    gameType: "hangman",
                 };
 
                 gameStates.set(chatId, gameState);
 
-                const gameText = `🎮 *Hangman Game Started!*\n\n` +
-                    `Word: ${gameState.guessed.join(' ')}\n` +
+                const gameText =
+                    `🎮 *Hangman Game Started!*\n\n` +
+                    `Word: ${gameState.guessed.join(" ")}\n` +
                     `Wrong guesses: ${gameState.wrongGuesses.length}/${gameState.maxWrong}\n\n` +
                     `Use !a <letter> to guess a letter!`;
 
-                await sock.sendMessage(chatId, { text: gameText }, { quoted: message });
+                await sock.sendMessage(
+                    chatId,
+                    { text: gameText },
+                    { quoted: message },
+                );
             } catch (err) {
-                console.error('Hangman command error:', err);
-                await sock.sendMessage(chatId, { text: '⚠️ Could not start a new hangman game. Please try again.' }, { quoted: message });
+                console.error("Hangman command error:", err);
+                await sock.sendMessage(
+                    chatId,
+                    {
+                        text: "⚠️ Could not start a new hangman game. Please try again.",
+                    },
+                    { quoted: message },
+                );
             }
-        }
+        },
     },
 
     trivia: {
-        description: 'Start a trivia game',
-        usage: 'trivia',
+        description: "Start a trivia game",
+        usage: "trivia",
         aliases: ["quiz"],
         adminOnly: false,
         execute: async (context) => {
-            const { chatId, bot, sock, message } = context;
+            const { chatId, bot, sock, message, sender } = context;
 
             try {
                 // ✅ Fetch 1 trivia question
-                const res = await axios.get("https://opentdb.com/api.php?amount=1&type=multiple");
+                const res = await axios.get(
+                    "https://opentdb.com/api.php?amount=1&type=multiple",
+                );
                 const data = res.data.results[0];
 
                 // Decode HTML entities (sometimes OpenTDB returns `&quot;`)
                 const he = require("he");
                 const question = he.decode(data.question);
                 const correct = he.decode(data.correct_answer);
-                const options = [...data.incorrect_answers.map(o => he.decode(o)), correct];
+                const options = [
+                    ...data.incorrect_answers.map((o) => he.decode(o)),
+                    correct,
+                ];
 
                 // Shuffle options
                 options.sort(() => Math.random() - 0.5);
@@ -78,54 +141,101 @@ const gameCommands = {
                     question,
                     answer: correct.toLowerCase(),
                     options,
-                    gameType: 'trivia'
+                    gameType: "trivia",
                 };
                 gameStates.set(chatId, gameState);
 
                 // ✅ Send question
-                const gameText = `🧠 *Trivia Question*\n\n${question}\n\n` +
+                const gameText =
+                    `🧠 *Trivia Question*\n\n${question}\n\n` +
                     options.map((o, i) => `${i + 1}. ${o}`).join("\n") +
                     `\n\nUse !a <answer> to reply! (you can type the full answer or the number)`;
 
-                await sock.sendMessage(chatId, { text: gameText }, { quoted: message });
+                await sock.sendMessage(
+                    chatId,
+                    { text: gameText },
+                    { quoted: message },
+                );
 
+                // Auto delete after 15s
+                setTimeout(async () => {
+                    const game = gameStates.get(chatId);
+
+                    if (game && game.gameType === "trivia") {
+                        gameStates.delete(chatId);
+
+                        await sock.sendMessage(
+                            chatId,
+                            {
+                                text: `⏰ Time's up! The answer wasn't guessed in 15s.`,
+                                mentions: [sender],
+                            },
+                            { quoted: message },
+                        );
+
+                        console.log(`⌛ Pokémon game expired in ${chatId}`);
+                    }
+                }, 15 * 1000);
             } catch (err) {
                 console.error("Trivia error:", err.message);
-                await bot.sendMessage(chatId, "⚠️ Couldn't fetch a trivia question, try again later.");
+                await bot.sendMessage(
+                    chatId,
+                    "⚠️ Couldn't fetch a trivia question, try again later.",
+                );
             }
-        }
+        },
     },
 
     tictactoe: {
-        description: 'Play TicTacToe with another user',
-        usage: 'tictactoe',
-        aliases: ['ttt'],
+        description: "Play TicTacToe with another user",
+        usage: "tictactoe",
+        aliases: ["ttt"],
         adminOnly: false,
         execute: async (context) => {
-            const { chatId, bot, sender, message } = context;
-            const TicTacToe = require('../utils/tictactoe');
+            const { chatId, bot, sender, sock, message } = context;
+            const TicTacToe = require("../utils/tictactoe");
 
             // Check if game already exists
-            if (gameStates.has(chatId) && gameStates.get(chatId).gameType === 'tictactoe') {
-                await bot.sendMessage(chatId, '❌ A TicTacToe game is already running here! Use !a <move> to play.');
+            if (
+                gameStates.has(chatId) &&
+                gameStates.get(chatId).gameType === "tictactoe"
+            ) {
+                await bot.sendMessage(
+                    chatId,
+                    "❌ A TicTacToe game is already running here! Use !a <move> to play.",
+                );
                 return;
             }
 
             // Ensure a second player (must mention or reply)
             let opponent;
-            if (message?.message?.extendedTextMessage?.contextInfo?.mentionedJid?.length > 0) {
-                opponent = message.message.extendedTextMessage.contextInfo.mentionedJid[0];
-            } else if (message?.message?.extendedTextMessage?.contextInfo?.participant) {
-                opponent = message.message.extendedTextMessage.contextInfo.participant;
+            if (
+                message?.message?.extendedTextMessage?.contextInfo?.mentionedJid
+                    ?.length > 0
+            ) {
+                opponent =
+                    message.message.extendedTextMessage.contextInfo
+                        .mentionedJid[0];
+            } else if (
+                message?.message?.extendedTextMessage?.contextInfo?.participant
+            ) {
+                opponent =
+                    message.message.extendedTextMessage.contextInfo.participant;
             }
 
             if (!opponent) {
-                await bot.sendMessage(chatId, '❌ Please mention or reply to someone to challenge them.');
+                await bot.sendMessage(
+                    chatId,
+                    "❌ Please mention or reply to someone to challenge them.",
+                );
                 return;
             }
 
             if (opponent === sender) {
-                await bot.sendMessage(chatId, '❌ You cannot play against yourself.');
+                await bot.sendMessage(
+                    chatId,
+                    "❌ You cannot play against yourself.",
+                );
                 return;
             }
 
@@ -133,71 +243,78 @@ const gameCommands = {
             const game = new TicTacToe(sender, opponent);
             const state = {
                 game,
-                gameType: 'tictactoe'
+                gameType: "tictactoe",
             };
             gameStates.set(chatId, state);
 
-            const board = game.render().map(v => ({
-                'X': '❎',
-                'O': '⭕',
-                '1': '1️⃣',
-                '2': '2️⃣',
-                '3': '3️⃣',
-                '4': '4️⃣',
-                '5': '5️⃣',
-                '6': '6️⃣',
-                '7': '7️⃣',
-                '8': '8️⃣',
-                '9': '9️⃣',
-            }[v]));
+            const board = game.render().map(
+                (v) =>
+                    ({
+                        X: "❎",
+                        O: "⭕",
+                        1: "1️⃣",
+                        2: "2️⃣",
+                        3: "3️⃣",
+                        4: "4️⃣",
+                        5: "5️⃣",
+                        6: "6️⃣",
+                        7: "7️⃣",
+                        8: "8️⃣",
+                        9: "9️⃣",
+                    })[v],
+            );
 
             const msg = `
 🎮 *TicTacToe Started!*
-Player ❎: @${sender.split('@')[0]}
-Player ⭕: @${opponent.split('@')[0]}
+Player ❎: @${sender.split("@")[0]}
+Player ⭕: @${opponent.split("@")[0]}
 
-${board.slice(0, 3).join('')}
-${board.slice(3, 6).join('')}
-${board.slice(6).join('')}
+${board.slice(0, 3).join("")}
+${board.slice(3, 6).join("")}
+${board.slice(6).join("")}
 
-Turn: @${game.currentTurn.split('@')[0]} (❎)
+Turn: @${game.currentTurn.split("@")[0]} (❎)
 
 Use !a <1-9> to make a move, or type !a surrender to give up.
 `;
 
-            await bot.sendMessage(chatId, msg, { mentions: [sender, opponent] });
-        }
+            await bot.sendMessage(chatId, msg, {
+                mentions: [sender, opponent],
+            });
+        },
     },
 
     poke: {
         description: 'Play "Who’s That Pokémon?"',
-        usage: 'poke',
+        usage: "poke",
         aliases: ["pokemon"],
         adminOnly: false,
         execute: async (context) => {
-            const { chatId, bot } = context;
+            const { chatId, bot, sock, sender, message } = context;
 
             try {
                 // pick random Pokémon ID (1 – 898)
                 const id = Math.floor(Math.random() * 898) + 1;
-                const res = await axios.get(`https://pokeapi.co/api/v2/pokemon/${id}`);
+                const res = await axios.get(
+                    `https://pokeapi.co/api/v2/pokemon/${id}`,
+                );
                 const pokemon = res.data;
 
                 // mask the Pokémon name
                 const hiddenName = pokemon.name.replace(/[a-zA-Z]/g, "_");
 
                 // pick official artwork or fallback sprite
-                const imageUrl = pokemon.sprites?.other?.['official-artwork']?.front_default
-                    || pokemon.sprites?.front_default;
+                const imageUrl =
+                    pokemon.sprites?.other?.["official-artwork"]
+                        ?.front_default || pokemon.sprites?.front_default;
 
                 // store game state so we can check answers later
                 gameStates.set(chatId, {
-                    gameType: 'poke',
+                    gameType: "poke",
                     answer: pokemon.name.toLowerCase(),
-                    attempts: 0,         // wrong attempts so far
-                    maxAttempts: 3       // limit (3 chances)
+                    attempts: 0, // wrong attempts so far
+                    maxAttempts: 2, // limit (3 chances)
                 });
-
 
                 const caption =
                     `🎮 *Who's That Pokémon?*\n\n` +
@@ -206,30 +323,56 @@ Use !a <1-9> to make a move, or type !a surrender to give up.
 
                 if (imageUrl) {
                     // fetch Pokémon image → Buffer
-                    const imgRes = await axios.get(imageUrl, { responseType: 'arraybuffer' });
+                    const imgRes = await axios.get(imageUrl, {
+                        responseType: "arraybuffer",
+                    });
                     const imgBuffer = Buffer.from(imgRes.data);
 
                     // use the dedicated wrapper
                     await bot.sendImage(chatId, imgBuffer, caption);
+                    // Auto delete after 10s
+                    setTimeout(async () => {
+                        const game = gameStates.get(chatId);
+
+                        if (game && game.gameType === "poke") {
+                            gameStates.delete(chatId);
+
+                            await sock.sendMessage(
+                                chatId,
+                                {
+                                    text: "⏰ Time's up! The Pokémon wasn't guessed in 15s.",
+                                    mentions: [sender],
+                                },
+                                { quoted: message },
+                            );
+
+                            console.log(`⌛ Pokémon game expired in ${chatId}`);
+                        }
+                    }, 15 * 1000);
                 } else {
                     // fallback: no image, just send caption
                     await bot.sendMessage(chatId, caption);
                 }
             } catch (err) {
-                console.error('PokéAPI error:', err?.message ?? err);
-                await bot.sendMessage(chatId, '⚠️ Could not fetch a Pokémon, try again!');
+                console.error("PokéAPI error:", err?.message ?? err);
+                await bot.sendMessage(
+                    chatId,
+                    "⚠️ Could not fetch a Pokémon, try again!",
+                );
             }
-        }
+        },
     },
 
     scramble: {
-        description: 'Start a word scramble game',
-        usage: 'scramble',
+        description: "Start a word scramble game",
+        usage: "scramble",
         adminOnly: false,
-        execute: async ({ chatId, bot }) => {
+        execute: async ({ chatId, bot, sock, message, sender }) => {
             try {
                 // Fetch a random word
-                const res = await axios.get('https://random-word-api.herokuapp.com/word?number=1');
+                const res = await axios.get(
+                    "https://random-word-api.herokuapp.com/word?number=1",
+                );
                 const word = res.data[0].toLowerCase();
 
                 const scrambled = scrambleWord(word);
@@ -240,150 +383,283 @@ Use !a <1-9> to make a move, or type !a surrender to give up.
 
                 // Save state
                 gameStates.set(chatId, {
-                    gameType: 'scramble',
+                    gameType: "scramble",
                     answer: word,
                     scrambled,
                     attempts: 0,
-                    maxAttempts: 3
+                    maxAttempts: 3,
                 });
 
                 const msg = `🔀 *Word Scramble!*\n\nRearrange the letters to form a word:\n\n👉 ${scrambled}\n\nUse !a <word> to guess. You have 3 chances!`;
 
                 await bot.sendMessage(chatId, msg);
+
+                // Auto delete after 10s
+                setTimeout(async () => {
+                    const game = gameStates.get(chatId);
+
+                    if (game && game.gameType === "scramble") {
+                        gameStates.delete(chatId);
+
+                        await sock.sendMessage(
+                            chatId,
+                            {
+                                text: `⏰ Time's up! The word wasn't guessed right after 45 seconds.`,
+                                mentions: [sender],
+                            },
+                            { quoted: message },
+                        );
+
+                        console.log(`⌛ Scramble game expired in ${chatId}`);
+                    }
+                }, 45 * 1000);
             } catch (error) {
                 console.error("Scramble error:", error);
-                await bot.sendMessage(chatId, "⚠️ Couldn't start scramble game, try again later.");
+                await bot.sendMessage(
+                    chatId,
+                    "⚠️ Couldn't start scramble game, try again later.",
+                );
             }
-        }
+        },
     },
 
     truth: {
-        description: 'Get a truth question',
-        usage: 'truth',
+        description: "Get a truth question",
+        usage: "truth",
         adminOnly: false,
         execute: async (context) => {
             const { chatId, bot, sock, message } = context;
 
             try {
-                const response = await axios.get("https://api.truthordarebot.xyz/v1/truth");
+                const response = await axios.get(
+                    "https://api.truthordarebot.xyz/v1/truth",
+                );
 
                 if (response.data && response.data.question) {
                     const truth = response.data.question;
-                    await bot.sendMessage(chatId, `💭 *Truth Question*\n\n${truth}`);
+                    await sock.sendMessage(
+                        chatId,
+                        { text: `💭 *Truth Question*\n\n${truth}` },
+                        { quoted: message },
+                    );
                 } else {
-                    await bot.sendMessage(chatId, "❌ Couldn't fetch a truth question, try again later!");
+                    await sock.sendMessage(
+                        chatId,
+                        {
+                            text: "❌ Couldn't fetch a truth question, try again later!",
+                        },
+                        { quoted: message },
+                    );
                 }
             } catch (error) {
                 console.error("Error fetching truth:", error.message);
-                await bot.sendMessage(chatId, "⚠️ Failed to fetch truth. Please try again later.");
+                await sock.sendMessage(
+                    chatId,
+                    {
+                        text: "⚠️ Failed to fetch truth. Please try again later.",
+                    },
+                    { quoted: message },
+                );
             }
-        }
+        },
     },
 
     dare: {
-        description: 'Get a dare challenge',
-        usage: 'dare',
+        description: "Get a dare challenge",
+        usage: "dare",
         adminOnly: false,
         execute: async (context) => {
             const { chatId, bot, sock, message } = context;
 
             try {
-                const response = await axios.get("https://api.truthordarebot.xyz/v1/dare");
+                const response = await axios.get(
+                    "https://api.truthordarebot.xyz/v1/dare",
+                );
 
                 if (response.data && response.data.question) {
                     const dare = response.data.question;
-                    await bot.sendMessage(chatId, `🎯 *Dare Challenge*\n\n${dare}`);
+                    await sock.sendMessage(
+                        chatId,
+                        { text: `🎯 *Dare Challenge*\n\n${dare}` },
+                        { quoted: message },
+                    );
                 } else {
-                    await bot.sendMessage(chatId, "❌ Couldn't fetch a dare challenge, try again later!");
+                    await sock.sendMessage(
+                        chatId,
+                        {
+                            text: "❌ Couldn't fetch a dare challenge, try again later!",
+                        },
+                        { quoted: message },
+                    );
                 }
             } catch (error) {
                 console.error("Error fetching dare:", error.message);
-                await bot.sendMessage(chatId, "⚠️ Failed to fetch dare. Please try again later.");
+                await sock.sendMessage(
+                    chatId,
+                    {
+                        text: "⚠️ Failed to fetch dare. Please try again later.",
+                    },
+                    { quoted: message },
+                );
             }
-        }
+        },
     },
 
     a: {
-        description: 'Answer/reply in games',
-        usage: 'a <answer>',
+        description: "Answer/reply in games",
+        usage: "a <answer>",
         adminOnly: false,
         execute: async (context) => {
-            const { args, chatId, bot } = context;
+            const { args, chatId, sock, bot, message, sender } = context;
 
             if (args.length === 0) {
-                await bot.sendMessage(chatId, '❌ Please provide an answer.\nUsage: !a <your answer>');
+                await bot.sendMessage(
+                    chatId,
+                    "❌ Please provide an answer.\nUsage: !a <your answer>",
+                );
                 return;
             }
 
             const gameState = gameStates.get(chatId);
             if (!gameState) {
-                await bot.sendMessage(chatId, '❌ No active game. Start a game first!');
+                await bot.sendMessage(
+                    chatId,
+                    "❌ No active game. Start a game first!",
+                );
                 return;
             }
 
-            const answer = args.join(' ').toLowerCase();
+            const answer = args.join(" ").toLowerCase();
 
             switch (gameState.gameType) {
-                case 'hangman':
-                    await handleHangmanGuess(gameState, answer, chatId, bot);
+                case "hangman":
+                    await handleHangmanGuess(
+                        gameState,
+                        answer,
+                        chatId,
+                        sock,
+                        message,
+                        sender,
+                    );
                     break;
 
-                case 'trivia':
-                    await handleTriviaAnswer(gameState, answer, chatId, bot);
+                case "trivia":
+                    await handleTriviaAnswer(
+                        gameState,
+                        answer,
+                        chatId,
+                        bot,
+                        sender,
+                    );
                     break;
 
-                case 'tictactoe':
-                    await handleTicTacToeMove(gameState, answer, chatId, bot, context.sender);
+                case "tictactoe":
+                    await handleTicTacToeMove(
+                        gameState,
+                        answer,
+                        chatId,
+                        bot,
+                        context.sender,
+                    );
                     break;
 
-                case 'poke': {
+                case "poke": {
                     if (answer === gameState.answer) {
-                        await bot.sendMessage(chatId, `✅ Correct! It was *${gameState.answer}*!`);
+                        const player = await Player.findOne({ userId: sender });
+                        player.lastGameResult = "win";
+                        await checkStreak(player, sock, chatId, message);
+                        await player.save();
+                        await sock.sendMessage(
+                            chatId,
+                            {
+                                text: `✅ Correct! It was *${gameState.answer}*!`,
+                            },
+                            { quoted: message },
+                        );
                         gameStates.delete(chatId);
                     } else {
                         gameState.attempts++;
                         if (gameState.attempts >= gameState.maxAttempts) {
-                            await bot.sendMessage(chatId, `❌ Out of chances! The Pokémon was *${gameState.answer}*`);
+                            const player = await Player.findOne({
+                                userId: sender,
+                            });
+                            player.lastGameResult = "loss";
+                            player.gameStreak = 0;
+                            await player.save();
+                            await sock.sendMessage(
+                                chatId,
+                                {
+                                    text: `❌ Out of chances! The Pokémon was *${gameState.answer}*`,
+                                },
+                                { quoted: message },
+                            );
                             gameStates.delete(chatId);
                         } else {
-                            await bot.sendMessage(chatId, `❌ Wrong! You have ${gameState.maxAttempts - gameState.attempts} tries left.`);
+                            await sock.sendMessage(
+                                chatId,
+                                {
+                                    text: `❌ Wrong! You have ${gameState.maxAttempts - gameState.attempts} tries left.`,
+                                },
+                                { quoted: message },
+                            );
                         }
                     }
                     break;
                 }
 
-                case 'scramble': {
+                case "scramble": {
                     if (answer === gameState.answer) {
-                        await bot.sendMessage(chatId, `✅ Correct! The word was *${gameState.answer}*`);
+                        const player = await Player.findOne({ userId: sender });
+                        player.lastGameResult = "win";
+                        await checkStreak(player, sock, chatId, message);
+                        await player.save();
+                        await bot.sendMessage(
+                            chatId,
+                            `✅ Correct! The word was *${gameState.answer}*`,
+                        );
                         gameStates.delete(chatId);
                     } else {
                         gameState.attempts++;
                         if (gameState.attempts >= gameState.maxAttempts) {
-                            await bot.sendMessage(chatId, `❌ Out of chances! The word was *${gameState.answer}*`);
+                            const player = await Player.findOne({
+                                userId: sender,
+                            });
+                            player.lastGameResult = "loss";
+                            player.gameStreak = 0;
+                            await player.save();
+                            await bot.sendMessage(
+                                chatId,
+                                `❌ Out of chances! The word was *${gameState.answer}*`,
+                            );
                             gameStates.delete(chatId);
                         } else {
                             // Add clue on last attempt
-                            let clue = '';
-                            if (gameState.attempts === gameState.maxAttempts - 1) {
+                            let clue = "";
+                            if (
+                                gameState.attempts ===
+                                gameState.maxAttempts - 1
+                            ) {
                                 // simple emoji hint system
                                 const emojiHints = {
-                                    car: '🚗',
-                                    apple: '🍎',
-                                    dog: '🐶',
-                                    cat: '🐱',
-                                    love: '❤️',
-                                    star: '⭐',
-                                    sun: '☀️',
-                                    moon: '🌙',
-                                    fire: '🔥',
-                                    book: '📖',
+                                    car: "🚗",
+                                    apple: "🍎",
+                                    dog: "🐶",
+                                    cat: "🐱",
+                                    love: "❤️",
+                                    star: "⭐",
+                                    sun: "☀️",
+                                    moon: "🌙",
+                                    fire: "🔥",
+                                    book: "📖",
                                 };
-                                clue = emojiHints[gameState.answer] ? `\n💡 Hint: ${emojiHints[gameState.answer]}` : '';
+                                clue = emojiHints[gameState.answer]
+                                    ? `\n💡 Hint: ${emojiHints[gameState.answer]}`
+                                    : "";
                             }
 
                             await bot.sendMessage(
                                 chatId,
-                                `❌ Wrong! You have ${gameState.maxAttempts - gameState.attempts} tries left.\nScrambled: ${gameState.scrambled}${clue}`
+                                `❌ Wrong! You have ${gameState.maxAttempts - gameState.attempts} tries left.\nScrambled: ${gameState.scrambled}${clue}`,
                             );
                         }
                     }
@@ -391,24 +667,35 @@ Use !a <1-9> to make a move, or type !a surrender to give up.
                 }
 
                 default:
-                    await bot.sendMessage(chatId, '❌ Unknown game type.');
+                    await bot.sendMessage(chatId, "❌ Unknown game type.");
             }
-        }
+        },
     },
 
     answer: {
-        description: 'Answer/reply in games (alias)',
-        usage: 'answer <answer>',
+        description: "Answer/reply in games (alias)",
+        usage: "answer <answer>",
         adminOnly: false,
         execute: async (context) => {
             return gameCommands.a.execute(context);
-        }
-    }
+        },
+    },
 };
 
-async function handleHangmanGuess(gameState, guess, chatId, bot) {
+async function handleHangmanGuess(
+    gameState,
+    guess,
+    chatId,
+    sock,
+    message,
+    sender,
+) {
     if (guess.length !== 1) {
-        await bot.sendMessage(chatId, '❌ Please guess only one letter at a time.');
+        await sock.sendMessage(
+            chatId,
+            { text: "❌ Please guess only one letter at a time." },
+            { quoted: message },
+        );
         return;
     }
 
@@ -422,32 +709,54 @@ async function handleHangmanGuess(gameState, guess, chatId, bot) {
             }
         }
 
-        if (!gameState.guessed.includes('_')) {
+        if (!gameState.guessed.includes("_")) {
             gameStates.delete(chatId);
-            await bot.sendMessage(chatId, `🎉 *You won!*\n\nThe word was: *${gameState.word}*`);
+            const player = await Player.findOne({ userId: sender });
+            player.lastGameResult = "win";
+            await checkStreak(player, sock, chatId, message);
+            await player.save();
+            await sock.sendMessage(
+                chatId,
+                { text: `🎉 *You won!*\n\nThe word was: *${gameState.word}*` },
+                { quoted: message },
+            );
             return;
         }
 
-        const gameText = `✅ Correct!\n\nWord: ${gameState.guessed.join(' ')}\n` +
+        const gameText =
+            `✅ Correct!\n\nWord: ${gameState.guessed.join(" ")}\n` +
             `Wrong guesses: ${gameState.wrongGuesses.length}/${gameState.maxWrong}`;
-        await bot.sendMessage(chatId, gameText);
+        await sock.sendMessage(chatId, { text: gameText }, { quoted: message });
     } else {
         // Wrong guess
         gameState.wrongGuesses.push(letter);
 
         if (gameState.wrongGuesses.length >= gameState.maxWrong) {
             gameStates.delete(chatId);
-            await bot.sendMessage(chatId, `💀 *Game Over!*\n\nThe word was: *${gameState.word}*`);
+            const player = await Player.findOne({
+                userId: sender,
+            });
+            player.lastGameResult = "loss";
+            player.gameStreak = 0;
+            await player.save();
+            await sock.sendMessage(
+                chatId,
+                {
+                    text: `💀 *Game Over!*\n\nThe word was: *${gameState.word}*`,
+                },
+                { quoted: message },
+            );
             return;
         }
 
-        const gameText = `❌ Wrong letter!\n\nWord: ${gameState.guessed.join(' ')}\n` +
-            `Wrong guesses: ${gameState.wrongGuesses.join(', ')} (${gameState.wrongGuesses.length}/${gameState.maxWrong})`;
-        await bot.sendMessage(chatId, gameText);
+        const gameText =
+            `❌ Wrong letter!\n\nWord: ${gameState.guessed.join(" ")}\n` +
+            `Wrong guesses: ${gameState.wrongGuesses.join(", ")} (${gameState.wrongGuesses.length}/${gameState.maxWrong})`;
+        await sock.sendMessage(chatId, { text: gameText }, { quoted: message });
     }
 }
 
-async function handleTriviaAnswer(gameState, answer, chatId, bot) {
+async function handleTriviaAnswer(gameState, answer, chatId, bot, sender) {
     let userAnswer = answer;
 
     // If user typed a number (e.g. "2"), map it to option
@@ -460,10 +769,26 @@ async function handleTriviaAnswer(gameState, answer, chatId, bot) {
 
     if (userAnswer === gameState.answer.toLowerCase()) {
         gameStates.delete(chatId);
-        await bot.sendMessage(chatId, `🎉 *Correct!*\n\nThe answer was: *${gameState.answer}*`);
+        const player = await Player.findOne({ userId: sender });
+        player.lastGameResult = "win";
+        await checkStreak(player, sock, chatId, message);
+        await player.save();
+        await bot.sendMessage(
+            chatId,
+            `🎉 *Correct!*\n\nThe answer was: *${gameState.answer}*`,
+        );
     } else {
         gameStates.delete(chatId);
-        await bot.sendMessage(chatId, `❌ *Wrong!*\n\nThe correct answer was: *${gameState.answer}*`);
+        const player = await Player.findOne({
+            userId: sender,
+        });
+        player.lastGameResult = "loss";
+        player.gameStreak = 0;
+        await player.save();
+        await bot.sendMessage(
+            chatId,
+            `❌ *Wrong!*\n\nThe correct answer was: *${gameState.answer}*`,
+        );
     }
 }
 
@@ -474,14 +799,18 @@ async function handleTicTacToeMove(gameState, input, chatId, bot, sender) {
     if (!surrender && !/^[1-9]$/.test(input)) return;
 
     if (!surrender && sender !== game.currentTurn) {
-        await bot.sendMessage(chatId, '❌ Not your turn!', { mentions: [sender] });
+        await bot.sendMessage(chatId, "❌ Not your turn!", {
+            mentions: [sender],
+        });
         return;
     }
 
-    let moveOk = surrender ? true : game.turn(sender === game.playerO, parseInt(input) - 1);
+    let moveOk = surrender
+        ? true
+        : game.turn(sender === game.playerO, parseInt(input) - 1);
 
     if (!moveOk) {
-        await bot.sendMessage(chatId, '❌ Invalid move!');
+        await bot.sendMessage(chatId, "❌ Invalid move!");
         return;
     }
 
@@ -492,27 +821,30 @@ async function handleTicTacToeMove(gameState, input, chatId, bot, sender) {
         winner = sender === game.playerX ? game.playerO : game.playerX;
     }
 
-    const board = game.render().map(v => ({
-        'X': '❎',
-        'O': '⭕',
-        '1': '1️⃣',
-        '2': '2️⃣',
-        '3': '3️⃣',
-        '4': '4️⃣',
-        '5': '5️⃣',
-        '6': '6️⃣',
-        '7': '7️⃣',
-        '8': '8️⃣',
-        '9': '9️⃣',
-    }[v]));
+    const board = game.render().map(
+        (v) =>
+            ({
+                X: "❎",
+                O: "⭕",
+                1: "1️⃣",
+                2: "2️⃣",
+                3: "3️⃣",
+                4: "4️⃣",
+                5: "5️⃣",
+                6: "6️⃣",
+                7: "7️⃣",
+                8: "8️⃣",
+                9: "9️⃣",
+            })[v],
+    );
 
     let status;
     if (winner) {
-        status = `🎉 @${winner.split('@')[0]} wins the game!`;
+        status = `🎉 @${winner.split("@")[0]} wins the game!`;
     } else if (isTie) {
         status = `🤝 It's a draw!`;
     } else {
-        status = `🎲 Turn: @${game.currentTurn.split('@')[0]}`;
+        status = `🎲 Turn: @${game.currentTurn.split("@")[0]}`;
     }
 
     const msg = `
@@ -520,30 +852,20 @@ async function handleTicTacToeMove(gameState, input, chatId, bot, sender) {
 
 ${status}
 
-${board.slice(0, 3).join('')}
-${board.slice(3, 6).join('')}
-${board.slice(6).join('')}
+${board.slice(0, 3).join("")}
+${board.slice(3, 6).join("")}
+${board.slice(6).join("")}
 
-Player ❎: @${game.playerX.split('@')[0]}
-Player ⭕: @${game.playerO.split('@')[0]}
+Player ❎: @${game.playerX.split("@")[0]}
+Player ⭕: @${game.playerO.split("@")[0]}
 `;
 
-    await bot.sendMessage(chatId, msg, { mentions: [game.playerX, game.playerO] });
+    await bot.sendMessage(chatId, msg, {
+        mentions: [game.playerX, game.playerO],
+    });
 
     if (winner || isTie) {
         gameStates.delete(chatId);
-    }
-}
-
-async function handlePokeAnswer(gameState, answer, chatId, bot) {
-    if (answer === gameState.answer) {
-        gameStates.delete(chatId);
-        await bot.sendMessage(chatId, `🎉 Correct! It's *${gameState.answer}*`);
-    } else if (/^(give ?up|surrender)$/i.test(answer)) {
-        gameStates.delete(chatId);
-        await bot.sendMessage(chatId, `💀 Game Over! The Pokémon was *${gameState.answer}*`);
-    } else {
-        await bot.sendMessage(chatId, `❌ Wrong guess! Try again...`);
     }
 }
 
