@@ -72,7 +72,7 @@ class Bot {
                         await this.sock.sendMessage(
                             chatId,
                             {
-                                text: `💤 *${afkPlayer.name || u}* is AFK: \n"${afkPlayer.afkMessage}"`,
+                                text: `💤 *${afkPlayer.name || u}* is currently AFK. \n📝 Message: "${afkPlayer.afkMessage}"`,
                             },
                             { quoted: message },
                         );
@@ -109,6 +109,13 @@ class Bot {
             const Config = require("./models/Config");
             const configDoc = await Config.findOne({});
             if (configDoc?.disabledCommands?.includes(commandName)) {
+                await this.sock.sendMessage(
+                    chatId,
+                    {
+                        text: `🚫 The command ${commandName} is currently disabled.`,
+                    },
+                    { quoted: message },
+                );
                 console.log(
                     `[BLOCKED] Disabled command ${commandName} used by ${sender}`,
                 );
@@ -341,16 +348,27 @@ class Bot {
                 if (["claim", "spawn"].includes(commandName)) {
                     expGain = 10;
                 } else if (["daily", "slot", "rob"].includes(commandName)) {
-                    expGain = 5;
+                    expGain = 10;
                 } else if (["register", "bonus"].includes(commandName)) {
-                    expGain = 25;
+                    expGain = 10;
                 }
 
                 player.exp += expGain;
 
-                // Level up check (every 1000 EXP = 1 level)
                 const oldLevel = player.level;
-                const newLevel = Math.floor(player.exp / 1000) + 1;
+
+                // Function to calculate total EXP needed for a given level
+                function expForLevel(level) {
+                    return ((level * (level + 1)) / 2) * 1000;
+                }
+
+                // Find the highest level the player qualifies for
+                let newLevel = oldLevel;
+                while (player.exp >= expForLevel(newLevel)) {
+                    newLevel++;
+                }
+
+                // If leveled up, apply rewards
                 if (newLevel > oldLevel) {
                     player.level = newLevel;
                     player.shards += newLevel * 100; // Level up bonus (shards)
